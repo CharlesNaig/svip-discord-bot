@@ -1,0 +1,117 @@
+// Method 1: Try Instagram mobile API
+async function tryMobileAPI(username) {
+  try {
+    const response = await axios.get(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${username}`, {
+      headers: {
+        'User-Agent': 'Instagram 219.0.0.12.117 Android',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'X-IG-App-ID': '936619743392459',
+        'X-ASBD-ID': '198387',
+        'X-IG-WWW-Claim': '0',
+        'Origin': 'https://www.instagram.com',
+        'Referer': 'https://www.instagram.com/',
+      },
+      timeout: 8000
+    });
+
+    if (response.data?.data?.user) {
+      const user = response.data.data.user;
+      return {
+        username: user.username,
+        fullName: user.full_name,
+        biography: user.biography,
+        profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url,
+        followerCount: user.edge_followed_by?.count || 0,
+        followingCount: user.edge_follow?.count || 0,
+        mediaCount: user.edge_owner_to_timeline_media?.count || 0,
+        isPrivate: user.is_private,
+        isVerified: user.is_verified
+      };
+    }
+  } catch (error) {
+    console.log('Mobile API failed:', error.message);
+  }
+  return null;
+}
+
+// Method 2: Web scraping with rotating user agents
+async function tryWebScraping(username) {
+  const userAgents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15'
+  ];
+
+  try {
+    const randomUA = userAgents[Math.floor(Math.random() * userAgents.length)];
+    
+    const response = await axios.get(`https://www.instagram.com/${username}/`, {
+      headers: {
+        'User-Agent': randomUA,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      },
+      timeout: 10000
+    });
+
+    const html = response.data;
+    
+    // Check if redirected to login page
+    if (html.includes('loginForm') || response.request.res.responseUrl.includes('/accounts/login/')) {
+      throw new Error('Redirected to login');
+    }
+
+    // Try to extract JSON-LD data
+    const jsonLdMatch = html.match(/<script type="application\/ld\+json"[^>]*>(.*?)<\/script>/s);
+    if (jsonLdMatch) {
+      try {
+        const jsonData = JSON.parse(jsonLdMatch[1]);
+        if (jsonData['@type'] === 'Person') {
+          return {
+            username: jsonData.alternateName?.replace('@', ''),
+            fullName: jsonData.name,
+            biography: jsonData.description,
+            profilePicUrl: jsonData.image
+          };
+        }
+      } catch (e) {
+        console.log('JSON-LD parsing failed');
+      }
+    }
+
+    // Try meta tags as final fallback
+    const titleMatch = html.match(/<title>([^<]+)<\/title>/);
+    const descMatch = html.match(/<meta name="description" content="([^"]+)"/);
+    const imageMatch = html.match(/<meta property="og:image" content="([^"]+)"/);
+    
+    if (titleMatch) {
+      const title = titleMatch[1];
+      const nameMatch = title.match(/^(.+?)\s*\(@([^)]+)\)/);
+      
+      if (nameMatch) {
+        return {
+          username: nameMatch[2],
+          fullName: nameMatch[1].trim(),
+          biography: descMatch ? descMatch[1] : null,
+          profilePicUrl: imageMatch ? imageMatch[1] : null
+        };
+      }
+    }
+
+  } catch (error) {
+    console.log('Web scraping failed:', error.message);
+  }
+  return null;
+}
